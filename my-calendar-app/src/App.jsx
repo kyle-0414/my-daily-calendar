@@ -4,65 +4,65 @@ import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken }
 import { getFirestore } from 'firebase/firestore';
 
 /**
- * [강력한 설정 로더]
- * 1. Vite 전용 환경 변수 (Vercel 배포용)
- * 2. 전역 변수 (캔버스 미리보기용)
+ * 환경 변수 및 설정을 감지하는 최적화된 로직
  */
 const getFirebaseConfig = () => {
   try {
-    // 1. Vite 환경 변수 확인 (import.meta.env 사용)
+    // 1. Vite 전용 (Vercel 배포 환경에서 가장 우선순위)
     // @ts-ignore
-    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_CONFIG) {
+    if (typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_CONFIG) {
       return JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG);
     }
 
-    // 2. 캔버스 전역 변수 확인
+    // 2. 캔버스(미리보기) 전역 변수
     if (typeof __firebase_config !== 'undefined' && __firebase_config) {
       return JSON.parse(__firebase_config);
     }
 
-    // 3. 일반 process.env 확인 (기타 환경)
-    if (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_CONFIG) {
+    // 3. 대체 수단 (process.env)
+    if (typeof process !== 'undefined' && process.env?.VITE_FIREBASE_CONFIG) {
       return JSON.parse(process.env.VITE_FIREBASE_CONFIG);
     }
   } catch (e) {
-    console.error("Firebase Configuration Error:", e);
+    return { error: `JSON 파싱 실패: ${e.message}` };
   }
   return null;
 };
 
-const firebaseConfig = getFirebaseConfig();
+const configCandidate = getFirebaseConfig();
 const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 export default function App() {
-  const [status, setStatus] = useState({
-    initialized: false,
-    authStatus: '초기화 중...',
-    error: null
-  });
+  const [log, setLog] = useState([]);
   const [user, setUser] = useState(null);
+  const [error, setError] = useState(configCandidate?.error || null);
+
+  const addLog = (msg) => setLog(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${msg}`]);
 
   useEffect(() => {
-    if (!firebaseConfig) {
-      setStatus(s => ({ ...s, error: 'Firebase 설정을 찾을 수 없습니다. 환경 변수를 확인해주세요.' }));
+    if (!configCandidate || configCandidate.error) {
+      setError(configCandidate?.error || "환경 변수(VITE_FIREBASE_CONFIG)를 찾을 수 없습니다.");
       return;
     }
 
     try {
-      const app = initializeApp(firebaseConfig);
+      addLog("Firebase 초기화 시도 중...");
+      const app = initializeApp(configCandidate);
       const auth = getAuth(app);
       const db = getFirestore(app);
 
       const initAuth = async () => {
         try {
           if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            addLog("Custom Token으로 로그인 시도...");
             await signInWithCustomToken(auth, __initial_auth_token);
           } else {
+            addLog("익명 로그인 시도...");
             await signInAnonymously(auth);
           }
         } catch (err) {
-          console.error("Auth Error:", err);
-          setStatus(s => ({ ...s, authStatus: `인증 실패: ${err.message}` }));
+          addLog(`인증 에러: ${err.message}`);
+          setError(`인증 실패: ${err.message}`);
         }
       };
 
@@ -71,63 +71,77 @@ export default function App() {
       const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
         setUser(currentUser);
         if (currentUser) {
-          setStatus(s => ({ 
-            ...s, 
-            initialized: true, 
-            authStatus: `연결됨 (UID: ${currentUser.uid})` 
-          }));
+          addLog(`로그인 성공! UID: ${currentUser.uid}`);
         }
       });
 
       return () => unsubscribe();
     } catch (err) {
-      setStatus(s => ({ ...s, error: `Firebase 초기화 실패: ${err.message}` }));
+      addLog(`초기화 치명적 에러: ${err.message}`);
+      setError(err.message);
     }
   }, []);
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
-        <h1 className="text-2xl font-bold text-white mb-6 border-b border-slate-800 pb-4">
-          Firebase 연결 진단
-        </h1>
-
-        {status.error ? (
-          <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-lg text-red-400 text-sm mb-4">
-            <strong>⚠️ 오류:</strong> {status.error}
+    <div className="min-h-screen bg-black text-white p-8 font-mono">
+      <div className="max-w-2xl mx-auto border border-zinc-800 rounded-lg overflow-hidden shadow-2xl">
+        <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex items-center justify-between">
+          <div className="flex space-x-2">
+            <div className="w-3 h-3 rounded-full bg-red-500"></div>
+            <div className="w-3 h-3 rounded-full bg-yellow-500"></div>
+            <div className="w-3 h-3 rounded-full bg-green-500"></div>
           </div>
-        ) : (
-          <div className="space-y-6">
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">설정 로드 상태</span>
-              <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded">성공</span>
-            </div>
+          <span className="text-xs text-zinc-500">System Diagnostic Tool</span>
+        </div>
 
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">인증 상태</span>
-              <span className="text-sm font-mono text-blue-400">{status.authStatus}</span>
+        <div className="p-6 space-y-4">
+          {error ? (
+            <div className="p-4 bg-red-900/20 border border-red-500/50 rounded text-red-400">
+              <h2 className="font-bold mb-1 text-sm uppercase">Diagnostic Error</h2>
+              <p className="text-xs">{error}</p>
             </div>
-
-            <div className="flex justify-between items-center">
-              <span className="text-slate-400">App ID</span>
-              <span className="text-sm font-mono text-slate-500">{appId}</span>
+          ) : (
+            <div className="p-4 bg-green-900/20 border border-green-500/50 rounded text-green-400">
+              <h2 className="font-bold mb-1 text-sm uppercase">System Online</h2>
+              <p className="text-[10px] opacity-80">Firebase SDK가 정상적으로 설정값을 읽었습니다.</p>
             </div>
+          )}
 
-            <div className="pt-4 border-t border-slate-800">
-              <p className="text-xs text-slate-500 leading-relaxed italic">
-                * Vercel 배포 시에는 <strong>VITE_FIREBASE_CONFIG</strong>를 사용하고, 
-                현재 미리보기 환경에서는 <strong>__firebase_config</strong>를 자동으로 사용합니다.
-              </p>
+          <div className="space-y-2">
+            <h3 className="text-zinc-400 text-[10px] uppercase tracking-widest">Logs</h3>
+            <div className="bg-zinc-950 p-4 rounded border border-zinc-800 h-48 overflow-y-auto text-[11px] space-y-1">
+              {log.length === 0 && <span className="text-zinc-700">No logs available...</span>}
+              {log.map((line, i) => (
+                <div key={i} className={line.includes('에러') || line.includes('실패') ? 'text-red-400' : 'text-zinc-300'}>
+                  {line}
+                </div>
+              ))}
             </div>
           </div>
-        )}
 
-        <button 
-          onClick={() => window.location.reload()}
-          className="w-full mt-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-indigo-500/20"
-        >
-          재시도
-        </button>
+          <div className="grid grid-cols-2 gap-4 text-[11px]">
+            <div className="p-3 bg-zinc-900 rounded border border-zinc-800">
+              <div className="text-zinc-500 mb-1 uppercase tracking-tighter">Auth UID</div>
+              <div className="truncate font-bold">{user ? user.uid : 'NOT_LOGGED_IN'}</div>
+            </div>
+            <div className="p-3 bg-zinc-900 rounded border border-zinc-800">
+              <div className="text-zinc-500 mb-1 uppercase tracking-tighter">App Target</div>
+              <div className="truncate font-bold">{appId}</div>
+            </div>
+          </div>
+
+          <button 
+            onClick={() => window.location.reload()}
+            className="w-full py-3 bg-white text-black text-sm font-bold rounded hover:bg-zinc-200 transition-colors"
+          >
+            REFRESH SYSTEM
+          </button>
+        </div>
+      </div>
+      
+      <div className="mt-8 max-w-2xl mx-auto text-[10px] text-zinc-600 space-y-3 leading-relaxed border-t border-zinc-900 pt-6">
+        <p>💡 <b>Vercel Config Guide</b>: 대시보드 환경 변수 섹션에서 키(Key) 이름은 <code>VITE_FIREBASE_CONFIG</code>로 지정하세요.</p>
+        <p>💡 <b>JSON Format</b>: 값(Value) 입력 시 중괄호로 시작하고 끝나는 순수 JSON 객체 형태여야 합니다.</p>
       </div>
     </div>
   );
