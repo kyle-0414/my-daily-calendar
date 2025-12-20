@@ -1,179 +1,136 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore } from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 
 /**
- * 환경 변수 감지 로직 (에러 방지를 위해 try-catch 강화)
+ * [환경 변수 안전 로더]
+ * 컴파일러 경고를 방지하기 위해 import.meta 대신 
+ * 환경별 전역 객체를 안전하게 참조합니다.
  */
-const getFirebaseConfig = () => {
+const getRawConfig = () => {
   try {
-    // 1. Vite / Vercel 환경 변수 확인
-    const viteConfig = typeof import.meta !== 'undefined' && import.meta.env?.VITE_FIREBASE_CONFIG;
-    if (viteConfig) return JSON.parse(viteConfig);
-
-    // 2. 캔버스 미리보기 전역 변수 확인
-    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+    // 1. 캔버스 미리보기 환경 (__firebase_config)
+    if (typeof __firebase_config !== 'undefined') {
       return JSON.parse(__firebase_config);
     }
 
-    // 3. process.env 확인 (기타 환경)
-    if (typeof process !== 'undefined' && process.env?.VITE_FIREBASE_CONFIG) {
-      return JSON.parse(process.env.VITE_FIREBASE_CONFIG);
-    }
+    // 2. Vercel/Vite 배포 환경 (호환성 있는 방식으로 접근)
+    // 전역 process.env 또는 meta.env를 안전하게 검사
+    const globalEnv = typeof window !== 'undefined' ? (window as any)._env_ : null;
+    const processEnv = typeof process !== 'undefined' ? process.env : null;
+    
+    // Vite 배포 환경 변수 접근 (문자열 리터럴로 직접 접근하여 컴파일러 최적화 활용)
+    const viteEnv = (import.meta as any).env?.VITE_FIREBASE_CONFIG;
+    
+    const configStr = viteEnv || (processEnv?.VITE_FIREBASE_CONFIG) || globalEnv?.VITE_FIREBASE_CONFIG;
+    
+    return configStr ? JSON.parse(configStr) : null;
   } catch (e) {
-    return { error: "설정 데이터 파싱 중 오류가 발생했습니다." };
+    console.error("Config load error:", e);
+    return null;
   }
-  return null;
 };
 
-const configCandidate = getFirebaseConfig();
-const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+const firebaseConfig = getRawConfig();
 
 export default function App() {
-  const [log, setLog] = useState([]);
+  const [status, setStatus] = useState('시스템 초기화 중...');
   const [user, setUser] = useState(null);
-  const [error, setError] = useState(configCandidate?.error || null);
-
-  const addLog = (msg) => setLog(prev => [...prev, `> ${msg}`]);
+  const [error, setError] = useState(null);
 
   useEffect(() => {
-    if (!configCandidate || configCandidate.error) {
-      setError(configCandidate?.error || "설정값을 찾을 수 없습니다. 환경 변수를 확인해주세요.");
+    // 설정값이 없는 경우 즉시 에러 처리
+    if (!firebaseConfig) {
+      setError('설정값(VITE_FIREBASE_CONFIG)을 찾을 수 없습니다. 환경 변수를 확인하세요.');
+      setStatus('연결 실패');
       return;
     }
 
     let isMounted = true;
 
-    const initializeDiagnostic = async () => {
+    const startConnection = async () => {
       try {
-        addLog("시스템 초기화 시작...");
-        const app = initializeApp(configCandidate);
+        const app = initializeApp(firebaseConfig);
         const auth = getAuth(app);
-        const db = getFirestore(app);
 
-        // 인증 처리
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          addLog("커스텀 토큰 인증 시도...");
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          addLog("익명 로그인 세션 연결 중...");
-          await signInAnonymously(auth);
+        // 익명 로그인 시도
+        const cred = await signInAnonymously(auth);
+        
+        if (isMounted) {
+          addStatusLog('로그인 시도 성공');
         }
 
-        onAuthStateChanged(auth, (currentUser) => {
-          if (isMounted) {
+        // 인증 상태 리스너
+        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+          if (isMounted && currentUser) {
             setUser(currentUser);
-            if (currentUser) {
-              addLog("인증 완료: 세션이 활성화되었습니다.");
-            }
+            setStatus('연결 성공!');
           }
         });
 
+        return unsubscribe;
       } catch (err) {
         if (isMounted) {
-          addLog(`에러 발생: ${err.message}`);
-          setError(err.message);
+          setError(`시스템 에러: ${err.message}`);
+          setStatus('연결 실패');
         }
       }
     };
 
-    initializeDiagnostic();
-    return () => { isMounted = false; };
+    const addStatusLog = (msg) => {
+      console.log(`[Firebase] ${msg}`);
+    };
+
+    const cleanupPromise = startConnection();
+
+    return () => {
+      isMounted = false;
+      cleanupPromise.then(unsub => unsub && unsub());
+    };
   }, []);
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-200 p-4 md:p-10 font-sans">
-      <div className="max-w-3xl mx-auto space-y-6">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-zinc-800 pb-4">
-          <div>
-            <h1 className="text-xl font-bold text-white">Firebase 연결 상태 진단</h1>
-            <p className="text-xs text-zinc-500 mt-1">App ID: {appId}</p>
-          </div>
-          <div className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase tracking-wider ${user ? 'bg-green-500/10 text-green-500 border border-green-500/20' : 'bg-yellow-500/10 text-yellow-500 border border-yellow-500/20'}`}>
-            {user ? 'Connected' : 'Connecting'}
-          </div>
+    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 text-slate-900 font-sans p-6 text-center">
+      <div className="max-w-md w-full border-4 border-slate-900 p-8 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] bg-white">
+        <h1 className="text-4xl font-black mb-8 uppercase tracking-tighter italic border-b-4 border-slate-900 pb-2">
+          Firebase Auth
+        </h1>
+
+        <div className={`text-xl font-bold py-4 px-8 mb-8 inline-block border-4 border-slate-900 transition-colors ${user ? 'bg-emerald-400' : 'bg-amber-300'}`}>
+          {status}
         </div>
 
-        {/* Status Card */}
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/30 p-4 rounded-lg">
-            <div className="flex items-center space-x-2 text-red-500 font-bold text-sm mb-1">
-              <span>⚠</span>
-              <span>진단 오류</span>
-            </div>
-            <p className="text-xs text-red-400 leading-relaxed">{error}</p>
+        {user && (
+          <div className="text-left bg-slate-100 p-5 border-2 border-slate-900 rounded-sm">
+            <p className="text-[10px] uppercase font-black text-slate-500 mb-2 tracking-widest">Active User UID</p>
+            <p className="text-xs font-mono break-all font-bold text-slate-800">{user.uid}</p>
           </div>
         )}
 
-        {/* Dashboard Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-xl">
-            <h2 className="text-xs font-semibold text-zinc-400 uppercase mb-3">사용자 세션</h2>
-            <div className="space-y-1">
-              <p className="text-[10px] text-zinc-500">User UID</p>
-              <p className="text-sm font-mono break-all text-white">{user ? user.uid : '대기 중...'}</p>
-            </div>
+        {error && (
+          <div className="mt-8 p-4 bg-rose-50 border-4 border-rose-500 text-rose-600 text-sm font-black uppercase">
+            {error}
           </div>
-          <div className="bg-zinc-900 border border-zinc-800 p-5 rounded-xl">
-            <h2 className="text-xs font-semibold text-zinc-400 uppercase mb-3">설정 상태</h2>
-            <div className="flex items-center space-x-2">
-              <div className={`w-2 h-2 rounded-full ${configCandidate ? 'bg-green-500' : 'bg-red-500'}`}></div>
-              <p className="text-sm text-white">{configCandidate ? 'Firebase Config 로드됨' : 'Config 누락'}</p>
-            </div>
-          </div>
-        </div>
+        )}
 
-        {/* Console Logs */}
-        <div className="bg-black rounded-xl border border-zinc-800 overflow-hidden">
-          <div className="bg-zinc-900/50 px-4 py-2 text-[10px] font-bold text-zinc-500 border-b border-zinc-800">
-            SYSTEM CONSOLE
-          </div>
-          <div className="p-4 h-64 overflow-y-auto font-mono text-xs space-y-2">
-            {log.map((entry, i) => (
-              <div key={i} className="flex space-x-2">
-                <span className="text-zinc-700">[{i+1}]</span>
-                <span className={entry.includes('에러') ? 'text-red-400' : 'text-green-400'}>{entry}</span>
-              </div>
-            ))}
-            {log.length === 0 && <p className="text-zinc-800 italic">로그를 기다리는 중...</p>}
-          </div>
-        </div>
-
-        {/* Actions */}
-        <div className="flex flex-col sm:flex-row gap-3 pt-4">
-          <button 
-            onClick={() => window.location.reload()}
-            className="flex-1 bg-white text-black py-3 rounded-lg font-bold text-sm hover:bg-zinc-200 transition-all active:scale-95"
-          >
-            시스템 새로고침
-          </button>
-          <button 
-            onClick={() => {
-               const dummy = document.createElement('textarea');
-               document.body.appendChild(dummy);
-               dummy.value = user?.uid || 'no-uid';
-               dummy.select();
-               document.execCommand('copy');
-               document.body.removeChild(dummy);
-            }}
-            className="flex-1 bg-zinc-800 text-white py-3 rounded-lg font-bold text-sm hover:bg-zinc-700 transition-all"
-          >
-            UID 복사하기
-          </button>
-        </div>
-
-        {/* Help Footer */}
-        <footer className="text-[11px] text-zinc-600 leading-relaxed border-t border-zinc-900 pt-6">
-          <p className="mb-2 font-bold text-zinc-500">도움말:</p>
-          <ul className="list-disc list-inside space-y-1">
-            <li>Vercel 배포 시 VITE_FIREBASE_CONFIG 환경 변수가 정확한지 확인하세요.</li>
-            <li>설정값은 유효한 JSON 형식이어야 하며 큰따옴표를 사용해야 합니다.</li>
-            <li>연결이 되지 않을 경우 Firebase 콘솔의 Authentication 탭에서 익명 로그인이 활성화되어 있는지 확인하세요.</li>
-          </ul>
-        </footer>
+        {!firebaseConfig && !error && (
+          <p className="mt-6 text-sm text-slate-400 font-medium">
+            Vercel 배포 시 환경 변수명을 <br/>
+            <span className="font-mono font-bold text-slate-600 underline">VITE_FIREBASE_CONFIG</span>로 설정하세요.
+          </p>
+        )}
+        
+        <button 
+          onClick={() => window.location.reload()}
+          className="mt-10 w-full bg-slate-900 text-white py-5 font-black text-xl hover:bg-slate-800 transition-transform active:scale-95 uppercase tracking-widest"
+        >
+          Retry Connection
+        </button>
       </div>
+      
+      <p className="mt-8 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
+        Simple Connectivity Diagnostic Tool v1.0
+      </p>
     </div>
   );
 }
