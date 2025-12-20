@@ -1,24 +1,32 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'firebase/auth';
-import { getFirestore, doc, getDoc, collection, query, onSnapshot } from 'firebase/firestore';
+import { getFirestore } from 'firebase/firestore';
 
 /**
- * [핵심 로직] Vercel과 캔버스 환경 모두를 지원하는 환경 변수 로더
+ * [강력한 설정 로더]
+ * 1. Vite 전용 환경 변수 (Vercel 배포용)
+ * 2. 전역 변수 (캔버스 미리보기용)
  */
 const getFirebaseConfig = () => {
   try {
-    // 1. Vercel 배포 환경 변수 (VITE_ 로 시작하는 환경 변수)
-    // 컴파일 에러를 방지하기 위해 window나 process 객체를 통해 접근합니다.
-    const envConfig = typeof process !== 'undefined' && process.env?.VITE_FIREBASE_CONFIG;
-    if (envConfig) return JSON.parse(envConfig);
+    // 1. Vite 환경 변수 확인 (import.meta.env 사용)
+    // @ts-ignore
+    if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env.VITE_FIREBASE_CONFIG) {
+      return JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG);
+    }
 
-    // 2. 캔버스 미리보기 환경 변수
+    // 2. 캔버스 전역 변수 확인
     if (typeof __firebase_config !== 'undefined' && __firebase_config) {
       return JSON.parse(__firebase_config);
     }
+
+    // 3. 일반 process.env 확인 (기타 환경)
+    if (typeof process !== 'undefined' && process.env && process.env.VITE_FIREBASE_CONFIG) {
+      return JSON.parse(process.env.VITE_FIREBASE_CONFIG);
+    }
   } catch (e) {
-    console.error("Firebase 설정 로드 실패:", e);
+    console.error("Firebase Configuration Error:", e);
   }
   return null;
 };
@@ -28,84 +36,97 @@ const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
 
 export default function App() {
   const [status, setStatus] = useState({
-    env: '검사 중...',
-    auth: '대기 중...',
-    configFound: !!firebaseConfig
+    initialized: false,
+    authStatus: '초기화 중...',
+    error: null
   });
   const [user, setUser] = useState(null);
 
   useEffect(() => {
-    if (!firebaseConfig) return;
+    if (!firebaseConfig) {
+      setStatus(s => ({ ...s, error: 'Firebase 설정을 찾을 수 없습니다. 환경 변수를 확인해주세요.' }));
+      return;
+    }
 
-    const app = initializeApp(firebaseConfig);
-    const auth = getAuth(app);
-    const db = getFirestore(app);
+    try {
+      const app = initializeApp(firebaseConfig);
+      const auth = getAuth(app);
+      const db = getFirestore(app);
 
-    // 인증 처리 (RULE 3 준수)
-    const initAuth = async () => {
-      try {
-        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-          await signInWithCustomToken(auth, __initial_auth_token);
-        } else {
-          await signInAnonymously(auth);
+      const initAuth = async () => {
+        try {
+          if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+            await signInWithCustomToken(auth, __initial_auth_token);
+          } else {
+            await signInAnonymously(auth);
+          }
+        } catch (err) {
+          console.error("Auth Error:", err);
+          setStatus(s => ({ ...s, authStatus: `인증 실패: ${err.message}` }));
         }
-      } catch (err) {
-        setStatus(prev => ({ ...prev, auth: `인증 에러: ${err.message}` }));
-      }
-    };
+      };
 
-    initAuth();
+      initAuth();
 
-    const unsubscribeAuth = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) {
-        setStatus(prev => ({ ...prev, auth: `연결됨 (UID: ${currentUser.uid.substring(0, 8)}...)` }));
-      }
-    });
+      const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+        setUser(currentUser);
+        if (currentUser) {
+          setStatus(s => ({ 
+            ...s, 
+            initialized: true, 
+            authStatus: `연결됨 (UID: ${currentUser.uid})` 
+          }));
+        }
+      });
 
-    return () => unsubscribeAuth();
+      return () => unsubscribe();
+    } catch (err) {
+      setStatus(s => ({ ...s, error: `Firebase 초기화 실패: ${err.message}` }));
+    }
   }, []);
 
   return (
-    <div className="min-h-screen bg-gray-900 text-white p-8 font-sans">
-      <div className="max-w-2xl mx-auto bg-gray-800 rounded-xl shadow-2xl border border-gray-700 p-6">
-        <h1 className="text-2xl font-bold mb-6 flex items-center gap-2">
-          <span className="text-blue-400">🚀</span> 시스템 환경 연결 진단
+    <div className="min-h-screen bg-slate-950 text-slate-200 flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8 shadow-xl">
+        <h1 className="text-2xl font-bold text-white mb-6 border-b border-slate-800 pb-4">
+          Firebase 연결 진단
         </h1>
 
-        <div className="space-y-4">
-          <div className="p-4 bg-gray-700 rounded-lg flex justify-between items-center">
-            <span>Firebase 설정 감지</span>
-            <span className={status.configFound ? "text-green-400 font-bold" : "text-red-400 font-bold"}>
-              {status.configFound ? "성공" : "실패"}
-            </span>
+        {status.error ? (
+          <div className="bg-red-500/10 border border-red-500/50 p-4 rounded-lg text-red-400 text-sm mb-4">
+            <strong>⚠️ 오류:</strong> {status.error}
           </div>
+        ) : (
+          <div className="space-y-6">
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400">설정 로드 상태</span>
+              <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs font-bold rounded">성공</span>
+            </div>
 
-          <div className="p-4 bg-gray-700 rounded-lg flex justify-between items-center">
-            <span>인증 상태</span>
-            <span className="text-blue-300 font-mono text-sm">{status.auth}</span>
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400">인증 상태</span>
+              <span className="text-sm font-mono text-blue-400">{status.authStatus}</span>
+            </div>
+
+            <div className="flex justify-between items-center">
+              <span className="text-slate-400">App ID</span>
+              <span className="text-sm font-mono text-slate-500">{appId}</span>
+            </div>
+
+            <div className="pt-4 border-t border-slate-800">
+              <p className="text-xs text-slate-500 leading-relaxed italic">
+                * Vercel 배포 시에는 <strong>VITE_FIREBASE_CONFIG</strong>를 사용하고, 
+                현재 미리보기 환경에서는 <strong>__firebase_config</strong>를 자동으로 사용합니다.
+              </p>
+            </div>
           </div>
-
-          <div className="p-4 bg-gray-700 rounded-lg flex justify-between items-center">
-            <span>현재 App ID</span>
-            <span className="text-yellow-400 font-mono text-sm">{appId}</span>
-          </div>
-        </div>
-
-        <div className="mt-8 p-4 bg-blue-900/30 border border-blue-800 rounded-lg">
-          <h2 className="text-sm font-semibold text-blue-300 mb-2">💡 팁</h2>
-          <p className="text-xs text-gray-400 leading-relaxed">
-            Vercel에 등록하신 <code className="bg-black/50 px-1 rounded text-pink-400">VITE_FIREBASE_CONFIG</code> 키는 
-            변경하지 않으셔도 됩니다. 위 코드가 실행될 때 Vercel 환경인지 미리보기 환경인지 자동으로 판단하여 
-            설정값을 읽어옵니다.
-          </p>
-        </div>
+        )}
 
         <button 
           onClick={() => window.location.reload()}
-          className="w-full mt-6 py-3 bg-blue-600 hover:bg-blue-500 transition-colors rounded-lg font-bold"
+          className="w-full mt-8 py-3 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl font-semibold transition-all shadow-lg shadow-indigo-500/20"
         >
-          상태 새로고침
+          재시도
         </button>
       </div>
     </div>
