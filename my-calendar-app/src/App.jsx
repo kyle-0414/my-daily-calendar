@@ -1,5 +1,4 @@
-// src/App.jsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo } from 'react';
 import {
   ChevronLeft,
   ChevronRight,
@@ -15,12 +14,11 @@ import {
   Search,
   CheckSquare,
   BarChart3,
-} from "lucide-react";
+} from 'lucide-react';
 
-import { auth, db, appId } from "./firebase";
-
-import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
+import { initializeApp } from 'firebase/app';
 import {
+  getFirestore,
   collection,
   doc,
   onSnapshot,
@@ -28,46 +26,87 @@ import {
   deleteDoc,
   updateDoc,
   query,
-} from "firebase/firestore";
+} from 'firebase/firestore';
+import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+
+/**
+ * ✅ Vite + Vercel Env 방식 Firebase config
+ * - Vercel Project Settings → Environment Variables 에 등록한 값들을 사용
+ */
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID,
+};
+
+// 아주 기초적인 env 검증 (실행만 되게, 로직은 건드리지 않음)
+const requiredKeys = [
+  'apiKey',
+  'authDomain',
+  'projectId',
+  'storageBucket',
+  'messagingSenderId',
+  'appId',
+];
+for (const k of requiredKeys) {
+  if (!firebaseConfig[k]) {
+    // 콘솔에서 바로 원인 확인 가능
+    // (화면을 막지는 않음)
+    console.warn(`[Firebase Env Missing] firebaseConfig.${k} is empty. Check Vercel env: VITE_FIREBASE_*`);
+  }
+}
+
+const app = initializeApp(firebaseConfig);
+const auth = getAuth(app);
+const db = getFirestore(app);
+
+// Firestore 경로에 쓰는 appId (원 코드의 __app_id 대체)
+const appId = import.meta.env.VITE_FIREBASE_APP_ID || 'premium-modern-dashboard';
 
 const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
-
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
-
   const [tasks, setTasks] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newTask, setNewTask] = useState("");
-  const [newPriority, setNewPriority] = useState("medium");
-  const [searchTerm, setSearchTerm] = useState("");
+  const [newTask, setNewTask] = useState('');
+  const [newPriority, setNewPriority] = useState('medium');
+  const [searchTerm, setSearchTerm] = useState('');
 
   // Helper to format date to YYYY-MM-DD consistently
   const formatDate = (date) => {
     const d = new Date(date);
-    const month = String(d.getMonth() + 1).padStart(2, "0");
-    const day = String(d.getDate()).padStart(2, "0");
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
     const year = d.getFullYear();
     return `${year}-${month}-${day}`;
   };
 
+  // randomUUID fallback (일부 환경에서 대비)
+  const makeId = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
   useEffect(() => {
-    // ✅ Vercel + Vite 환경: Custom Token 흐름 제거하고 Anonymous 로그인만 사용
     const initAuth = async () => {
       try {
+        // ✅ 지금 세팅에선 익명 로그인만 사용 (custom token 제거)
         await signInAnonymously(auth);
       } catch (error) {
-        console.error("Auth Error:", error);
+        console.error('Auth Error:', error);
       }
     };
 
     initAuth();
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser || null);
-      // 로그인 완료/실패 여부와 상관 없이 로딩은 풀어줌(UI는 뜨고 콘솔로 확인 가능)
-      setLoading(false);
+      setUser(currentUser);
+      if (currentUser) setLoading(false);
     });
 
     return () => unsubscribe();
@@ -76,22 +115,14 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
 
-    // ✅ 기존 경로 유지 (너의 로직 그대로)
-    const tasksCollection = collection(
-      db,
-      "artifacts",
-      appId,
-      "users",
-      user.uid,
-      "tasks"
-    );
+    const tasksCollection = collection(db, 'artifacts', appId, 'users', user.uid, 'tasks');
 
     const unsubscribe = onSnapshot(
       query(tasksCollection),
       (snapshot) => {
         setTasks(snapshot.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
-      (error) => console.error("Firestore Error:", error)
+      (error) => console.error('Firestore Error:', error)
     );
 
     return () => unsubscribe();
@@ -107,7 +138,7 @@ const App = () => {
     for (let i = 0; i < firstDay; i++) days.push({ day: null, currentMonth: false });
 
     for (let i = 1; i <= totalDays; i++) {
-      const dateStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(i).padStart(2, "0")}`;
+      const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
       days.push({
         day: i,
         dateStr,
@@ -115,6 +146,7 @@ const App = () => {
         tasks: tasks.filter((t) => t.date === dateStr),
       });
     }
+
     return days;
   }, [currentDate, tasks]);
 
@@ -122,36 +154,27 @@ const App = () => {
     if (!newTask.trim() || !user) return;
 
     const dateStr = formatDate(selectedDate);
-
-    // crypto.randomUUID()가 일부 환경에서 없을 수 있어 fallback 포함
-    const taskId =
-      typeof crypto !== "undefined" && crypto.randomUUID
-        ? crypto.randomUUID()
-        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const taskId = makeId();
 
     try {
-      await setDoc(
-        doc(db, "artifacts", appId, "users", user.uid, "tasks", taskId),
-        {
-          date: dateStr,
-          text: newTask,
-          completed: false,
-          priority: newPriority,
-          createdAt: new Date().toISOString(),
-        }
-      );
-
-      setNewTask("");
+      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', taskId), {
+        date: dateStr,
+        text: newTask,
+        completed: false,
+        priority: newPriority,
+        createdAt: new Date().toISOString(),
+      });
+      setNewTask('');
       setIsModalOpen(false);
     } catch (error) {
-      console.error("Add Error:", error);
+      console.error('Add Error:', error);
     }
   };
 
   const toggleTask = async (id, status) => {
     if (!user) return;
     try {
-      await updateDoc(doc(db, "artifacts", appId, "users", user.uid, "tasks", id), {
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', id), {
         completed: !status,
       });
     } catch (error) {
@@ -162,22 +185,22 @@ const App = () => {
   const deleteTask = async (id) => {
     if (!user) return;
     try {
-      await deleteDoc(doc(db, "artifacts", appId, "users", user.uid, "tasks", id));
+      await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', id));
     } catch (error) {
       console.error(error);
     }
   };
 
   const jumpToTaskDate = (dateStr) => {
-    const [year, month, day] = dateStr.split("-").map(Number);
+    const [year, month, day] = dateStr.split('-').map(Number);
     const targetDate = new Date(year, month - 1, day);
     setCurrentDate(new Date(year, month - 1, 1));
     setSelectedDate(targetDate);
-    setSearchTerm("");
+    setSearchTerm('');
   };
 
   const displayTasks = useMemo(() => {
-    if (searchTerm.trim() === "") {
+    if (searchTerm.trim() === '') {
       const selectedDateStr = formatDate(selectedDate);
       return tasks.filter((t) => t.date === selectedDateStr);
     }
@@ -191,13 +214,12 @@ const App = () => {
     return Math.round((todaysTasks.filter((t) => t.completed).length / todaysTasks.length) * 100);
   }, [tasks, selectedDate]);
 
-  if (loading) {
+  if (loading)
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]">
         <Loader2 className="animate-spin text-indigo-600" size={32} />
       </div>
     );
-  }
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -212,17 +234,17 @@ const App = () => {
 
         <nav className="flex-1 px-3 space-y-1">
           {[
-            { icon: <LayoutGrid size={18} />, label: "Dashboard", active: true },
-            { icon: <CalendarIcon size={18} />, label: "Schedule", active: false },
-            { icon: <BarChart3 size={18} />, label: "Analytics", active: false },
-            { icon: <Settings size={18} />, label: "Settings", active: false },
+            { icon: <LayoutGrid size={18} />, label: 'Dashboard', active: true },
+            { icon: <CalendarIcon size={18} />, label: 'Schedule', active: false },
+            { icon: <BarChart3 size={18} />, label: 'Analytics', active: false },
+            { icon: <Settings size={18} />, label: 'Settings', active: false },
           ].map((item, i) => (
             <button
               key={i}
               className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
                 item.active
-                  ? "bg-indigo-50 text-indigo-700 font-semibold"
-                  : "text-slate-400 hover:bg-slate-50 hover:text-slate-600"
+                  ? 'bg-indigo-50 text-indigo-700 font-semibold'
+                  : 'text-slate-400 hover:bg-slate-50 hover:text-slate-600'
               }`}
             >
               {item.icon}
@@ -238,9 +260,7 @@ const App = () => {
             </div>
             <div className="hidden lg:block overflow-hidden">
               <p className="text-xs font-bold text-slate-700 truncate">Jane Doe</p>
-              <p className="text-[10px] text-slate-400 truncate tracking-tight uppercase font-bold">
-                Workspace
-              </p>
+              <p className="text-[10px] text-slate-400 truncate tracking-tight uppercase font-bold">Workspace</p>
             </div>
           </div>
         </div>
@@ -257,17 +277,13 @@ const App = () => {
               </h2>
               <div className="flex bg-slate-100 rounded-xl p-1">
                 <button
-                  onClick={() =>
-                    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))
-                  }
+                  onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() - 1, 1))}
                   className="p-2 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-500"
                 >
                   <ChevronLeft size={18} />
                 </button>
                 <button
-                  onClick={() =>
-                    setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))
-                  }
+                  onClick={() => setCurrentDate(new Date(currentDate.getFullYear(), currentDate.getMonth() + 1, 1))}
                   className="p-2 hover:bg-white hover:shadow-sm rounded-lg transition-all text-slate-500"
                 >
                   <ChevronRight size={18} />
@@ -289,15 +305,11 @@ const App = () => {
 
           <div className="flex-1 overflow-y-auto p-8 custom-scrollbar">
             <div className="grid grid-cols-7 gap-px bg-slate-100 border border-slate-100 rounded-[2rem] overflow-hidden shadow-sm">
-              {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((d, i) => (
+              {['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].map((d, i) => (
                 <div
                   key={d}
                   className={`py-4 text-[10px] font-black uppercase tracking-[0.2em] bg-slate-50 text-center ${
-                    i === 0
-                      ? "text-rose-500"
-                      : i === 6
-                      ? "text-blue-500"
-                      : "text-slate-400"
+                    i === 0 ? 'text-rose-500' : i === 6 ? 'text-blue-500' : 'text-slate-400'
                   }`}
                 >
                   {d}
@@ -314,13 +326,13 @@ const App = () => {
                     key={idx}
                     onClick={() => {
                       if (item.day) {
-                        const [y, m, d] = item.dateStr.split("-").map(Number);
+                        const [y, m, d] = item.dateStr.split('-').map(Number);
                         setSelectedDate(new Date(y, m - 1, d));
                       }
                     }}
                     className={`min-h-[120px] p-3 bg-white transition-all cursor-pointer group relative
-                      ${!item.currentMonth ? "bg-slate-50/40 opacity-40" : "hover:bg-indigo-50/30"}
-                      ${isSelected ? "z-10 ring-4 ring-inset ring-indigo-500/10 bg-indigo-50/20" : ""}`}
+                      ${!item.currentMonth ? 'bg-slate-50/40 opacity-40' : 'hover:bg-indigo-50/30'}
+                      ${isSelected ? 'z-10 ring-4 ring-inset ring-indigo-500/10 bg-indigo-50/20' : ''}`}
                   >
                     {item.day && (
                       <div className="h-full flex flex-col">
@@ -328,32 +340,29 @@ const App = () => {
                           className={`inline-flex items-center justify-center w-7 h-7 text-sm font-bold rounded-xl mb-3 transition-all
                           ${
                             isToday
-                              ? "bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+                              ? 'bg-indigo-600 text-white shadow-lg shadow-indigo-100'
                               : isSelected
-                              ? "text-indigo-600 font-black"
-                              : "text-slate-500"
+                              ? 'text-indigo-600 font-black'
+                              : 'text-slate-500'
                           }`}
                         >
                           {item.day}
                         </span>
-
                         <div className="flex-1 space-y-1.5">
                           {item.tasks.slice(0, 3).map((t) => (
                             <div
                               key={t.id}
                               className={`text-[10px] px-2 py-1 rounded-lg border truncate transition-all ${
                                 t.completed
-                                  ? "bg-slate-50 text-slate-300 border-transparent line-through"
-                                  : "bg-white border-slate-100 text-slate-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)]"
+                                  ? 'bg-slate-50 text-slate-300 border-transparent line-through'
+                                  : 'bg-white border-slate-100 text-slate-600 shadow-[0_1px_2px_rgba(0,0,0,0.03)]'
                               }`}
                             >
                               {t.text}
                             </div>
                           ))}
                           {item.tasks.length > 3 && (
-                            <p className="text-[9px] text-slate-300 font-bold pl-1">
-                              +{item.tasks.length - 3} more
-                            </p>
+                            <p className="text-[9px] text-slate-300 font-bold pl-1">+{item.tasks.length - 3} more</p>
                           )}
                         </div>
                       </div>
@@ -392,12 +401,10 @@ const App = () => {
             <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
               <div>
                 <h3 className="font-black text-base tracking-tight text-slate-900">
-                  {searchTerm.trim() !== "" ? "Search Results" : "Tasks"}
+                  {searchTerm.trim() !== '' ? 'Search Results' : 'Tasks'}
                 </h3>
                 <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mt-0.5">
-                  {searchTerm.trim() !== ""
-                    ? `${displayTasks.length} Found`
-                    : formatDate(selectedDate)}
+                  {searchTerm.trim() !== '' ? `${displayTasks.length} Found` : formatDate(selectedDate)}
                 </p>
               </div>
               <button
@@ -413,12 +420,12 @@ const App = () => {
                 displayTasks.map((task) => (
                   <div
                     key={task.id}
-                    onClick={() => searchTerm.trim() !== "" && jumpToTaskDate(task.date)}
+                    onClick={() => searchTerm.trim() !== '' && jumpToTaskDate(task.date)}
                     className={`flex items-center gap-3 p-3.5 rounded-xl border transition-all
                     ${
-                      searchTerm.trim() !== ""
-                        ? "hover:border-indigo-200 cursor-pointer bg-slate-50/50"
-                        : "bg-white border-slate-50 hover:border-slate-200 hover:shadow-md"
+                      searchTerm.trim() !== ''
+                        ? 'hover:border-indigo-200 cursor-pointer bg-slate-50/50'
+                        : 'bg-white border-slate-50 hover:border-slate-200 hover:shadow-md'
                     }`}
                   >
                     <button
@@ -429,38 +436,32 @@ const App = () => {
                       className={`shrink-0 w-5 h-5 rounded-lg border-2 flex items-center justify-center transition-all 
                       ${
                         task.completed
-                          ? "bg-emerald-500 border-emerald-500 text-white"
-                          : "border-slate-200 bg-white hover:border-indigo-400"
+                          ? 'bg-emerald-500 border-emerald-500 text-white'
+                          : 'border-slate-200 bg-white hover:border-indigo-400'
                       }`}
                     >
                       {task.completed && <CheckCircle2 size={12} />}
                     </button>
 
                     <div className="flex-1 min-w-0">
-                      <p
-                        className={`text-xs font-bold truncate ${
-                          task.completed ? "text-slate-300 line-through" : "text-slate-700"
-                        }`}
-                      >
+                      <p className={`text-xs font-bold truncate ${task.completed ? 'text-slate-300 line-through' : 'text-slate-700'}`}>
                         {task.text}
                       </p>
                       <div className="flex items-center gap-1.5 mt-0.5">
                         <div
                           className={`w-1.5 h-1.5 rounded-full ${
-                            task.priority === "high"
-                              ? "bg-rose-500"
-                              : task.priority === "medium"
-                              ? "bg-indigo-500"
-                              : "bg-slate-300"
+                            task.priority === 'high'
+                              ? 'bg-rose-500'
+                              : task.priority === 'medium'
+                              ? 'bg-indigo-500'
+                              : 'bg-slate-300'
                           }`}
                         />
-                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">
-                          {task.priority}
-                        </span>
+                        <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{task.priority}</span>
                       </div>
                     </div>
 
-                    {searchTerm.trim() === "" && (
+                    {searchTerm.trim() === '' && (
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
@@ -476,22 +477,18 @@ const App = () => {
               ) : (
                 <div className="h-full flex flex-col items-center justify-center text-slate-300 py-8">
                   <Clock size={24} className="opacity-20 mb-2" />
-                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">
-                    Empty List
-                  </p>
+                  <p className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40">Empty List</p>
                 </div>
               )}
             </div>
           </div>
 
-          {/* 4. Productivity Progress Card (Compact Style) */}
+          {/* 4. Productivity Progress Card */}
           <div className="bg-white rounded-[1.5rem] p-5 border border-slate-100 shadow-[0_4px_20px_rgb(0,0,0,0.03)] relative overflow-hidden transition-all hover:shadow-md">
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-bold text-slate-800 tracking-tight">Productivity</h4>
-                <span className="text-3xl font-black text-slate-900 tracking-tighter">
-                  {progress}%
-                </span>
+                <span className="text-3xl font-black text-slate-900 tracking-tighter">{progress}%</span>
               </div>
 
               <div className="space-y-2">
@@ -502,12 +499,8 @@ const App = () => {
                   />
                 </div>
                 <div className="flex justify-between items-center">
-                  <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">
-                    Active Tracker
-                  </p>
-                  <p className="text-[8px] text-indigo-600 font-black uppercase tracking-widest">
-                    Daily Goal
-                  </p>
+                  <p className="text-[8px] text-slate-400 font-bold uppercase tracking-widest">Active Tracker</p>
+                  <p className="text-[8px] text-indigo-600 font-black uppercase tracking-widest">Daily Goal</p>
                 </div>
               </div>
             </div>
@@ -540,7 +533,7 @@ const App = () => {
                     type="text"
                     value={newTask}
                     onChange={(e) => setNewTask(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && handleAddTask()}
+                    onKeyDown={(e) => e.key === 'Enter' && handleAddTask()}
                     placeholder="Enter task..."
                     className="w-full p-4 bg-slate-50 border border-slate-100 focus:border-indigo-500 rounded-xl outline-none transition-all text-sm font-bold shadow-inner"
                   />
@@ -551,15 +544,15 @@ const App = () => {
                     Priority Level
                   </label>
                   <div className="flex gap-2">
-                    {["high", "medium", "low"].map((p) => (
+                    {['high', 'medium', 'low'].map((p) => (
                       <button
                         key={p}
                         onClick={() => setNewPriority(p)}
                         className={`flex-1 py-3 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all border-2
                         ${
                           newPriority === p
-                            ? "bg-slate-900 border-slate-900 text-white shadow-lg translate-y-[-1px]"
-                            : "bg-white text-slate-400 border-slate-50 hover:bg-slate-50"
+                            ? 'bg-slate-900 border-slate-900 text-white shadow-lg translate-y-[-1px]'
+                            : 'bg-white text-slate-400 border-slate-50 hover:bg-slate-50'
                         }`}
                       >
                         {p}
