@@ -17,7 +17,6 @@ import {
   BarChart3,
 } from "lucide-react";
 
-// ✅ 변경: firebase 초기화는 firebase.js에서만 처리
 import { auth, db, appId } from "./firebase";
 
 import { signInAnonymously, onAuthStateChanged } from "firebase/auth";
@@ -34,8 +33,10 @@ import {
 const App = () => {
   const [user, setUser] = useState(null);
   const [loading, setLoading] = useState(true);
+
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
+
   const [tasks, setTasks] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [newTask, setNewTask] = useState("");
@@ -51,8 +52,8 @@ const App = () => {
     return `${year}-${month}-${day}`;
   };
 
-  // ✅ 변경: Vercel+Vite 환경에서는 익명 로그인만 사용 (성공했던 방식)
   useEffect(() => {
+    // ✅ Vercel + Vite 환경: Custom Token 흐름 제거하고 Anonymous 로그인만 사용
     const initAuth = async () => {
       try {
         await signInAnonymously(auth);
@@ -64,8 +65,9 @@ const App = () => {
     initAuth();
 
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      if (currentUser) setLoading(false);
+      setUser(currentUser || null);
+      // 로그인 완료/실패 여부와 상관 없이 로딩은 풀어줌(UI는 뜨고 콘솔로 확인 가능)
+      setLoading(false);
     });
 
     return () => unsubscribe();
@@ -74,6 +76,7 @@ const App = () => {
   useEffect(() => {
     if (!user) return;
 
+    // ✅ 기존 경로 유지 (너의 로직 그대로)
     const tasksCollection = collection(
       db,
       "artifacts",
@@ -119,16 +122,24 @@ const App = () => {
     if (!newTask.trim() || !user) return;
 
     const dateStr = formatDate(selectedDate);
-    const taskId = crypto.randomUUID();
+
+    // crypto.randomUUID()가 일부 환경에서 없을 수 있어 fallback 포함
+    const taskId =
+      typeof crypto !== "undefined" && crypto.randomUUID
+        ? crypto.randomUUID()
+        : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
     try {
-      await setDoc(doc(db, "artifacts", appId, "users", user.uid, "tasks", taskId), {
-        date: dateStr,
-        text: newTask,
-        completed: false,
-        priority: newPriority,
-        createdAt: new Date().toISOString(),
-      });
+      await setDoc(
+        doc(db, "artifacts", appId, "users", user.uid, "tasks", taskId),
+        {
+          date: dateStr,
+          text: newTask,
+          completed: false,
+          priority: newPriority,
+          createdAt: new Date().toISOString(),
+        }
+      );
 
       setNewTask("");
       setIsModalOpen(false);
@@ -180,12 +191,13 @@ const App = () => {
     return Math.round((todaysTasks.filter((t) => t.completed).length / todaysTasks.length) * 100);
   }, [tasks, selectedDate]);
 
-  if (loading)
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-[#F8FAFC]">
         <Loader2 className="animate-spin text-indigo-600" size={32} />
       </div>
     );
+  }
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
@@ -281,7 +293,11 @@ const App = () => {
                 <div
                   key={d}
                   className={`py-4 text-[10px] font-black uppercase tracking-[0.2em] bg-slate-50 text-center ${
-                    i === 0 ? "text-rose-500" : i === 6 ? "text-blue-500" : "text-slate-400"
+                    i === 0
+                      ? "text-rose-500"
+                      : i === 6
+                      ? "text-blue-500"
+                      : "text-slate-400"
                   }`}
                 >
                   {d}
@@ -320,6 +336,7 @@ const App = () => {
                         >
                           {item.day}
                         </span>
+
                         <div className="flex-1 space-y-1.5">
                           {item.tasks.slice(0, 3).map((t) => (
                             <div
@@ -378,7 +395,9 @@ const App = () => {
                   {searchTerm.trim() !== "" ? "Search Results" : "Tasks"}
                 </h3>
                 <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mt-0.5">
-                  {searchTerm.trim() !== "" ? `${displayTasks.length} Found` : formatDate(selectedDate)}
+                  {searchTerm.trim() !== ""
+                    ? `${displayTasks.length} Found`
+                    : formatDate(selectedDate)}
                 </p>
               </div>
               <button
