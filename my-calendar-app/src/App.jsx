@@ -1,136 +1,144 @@
 import React, { useState, useEffect } from 'react';
 import { initializeApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { 
+  getAuth, 
+  signInAnonymously, 
+  signInWithCustomToken, 
+  onAuthStateChanged 
+} from 'firebase/auth';
+import { 
+  getFirestore, 
+  collection, 
+  getDocs, 
+  query, 
+  limit 
+} from 'firebase/firestore';
 
-/**
- * [환경 변수 안전 로더]
- * 컴파일러 경고를 방지하기 위해 import.meta 대신 
- * 환경별 전역 객체를 안전하게 참조합니다.
- */
-const getRawConfig = () => {
-  try {
-    // 1. 캔버스 미리보기 환경 (__firebase_config)
-    if (typeof __firebase_config !== 'undefined') {
-      return JSON.parse(__firebase_config);
-    }
-
-    // 2. Vercel/Vite 배포 환경 (호환성 있는 방식으로 접근)
-    // 전역 process.env 또는 meta.env를 안전하게 검사
-    const globalEnv = typeof window !== 'undefined' ? (window as any)._env_ : null;
-    const processEnv = typeof process !== 'undefined' ? process.env : null;
-    
-    // Vite 배포 환경 변수 접근 (문자열 리터럴로 직접 접근하여 컴파일러 최적화 활용)
-    const viteEnv = (import.meta as any).env?.VITE_FIREBASE_CONFIG;
-    
-    const configStr = viteEnv || (processEnv?.VITE_FIREBASE_CONFIG) || globalEnv?.VITE_FIREBASE_CONFIG;
-    
-    return configStr ? JSON.parse(configStr) : null;
-  } catch (e) {
-    console.error("Config load error:", e);
-    return null;
-  }
-};
-
-const firebaseConfig = getRawConfig();
-
-export default function App() {
-  const [status, setStatus] = useState('시스템 초기화 중...');
+const App = () => {
+  const [logs, setLogs] = useState([]);
+  const [status, setStatus] = useState('initial');
   const [user, setUser] = useState(null);
-  const [error, setError] = useState(null);
+
+  const addLog = (msg, type = 'info') => {
+    setLogs(prev => [...prev, { 
+      id: Date.now() + Math.random(), 
+      msg: typeof msg === 'object' ? JSON.stringify(msg) : msg, 
+      type, 
+      time: new Date().toLocaleTimeString() 
+    }]);
+  };
 
   useEffect(() => {
-    // 설정값이 없는 경우 즉시 에러 처리
-    if (!firebaseConfig) {
-      setError('설정값(VITE_FIREBASE_CONFIG)을 찾을 수 없습니다. 환경 변수를 확인하세요.');
-      setStatus('연결 실패');
-      return;
-    }
+    const runDiagnostic = async () => {
+      addLog('진단을 시작합니다...');
 
-    let isMounted = true;
-
-    const startConnection = async () => {
+      // 1. Firebase Config 확인
+      let config;
       try {
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-
-        // 익명 로그인 시도
-        const cred = await signInAnonymously(auth);
-        
-        if (isMounted) {
-          addStatusLog('로그인 시도 성공');
-        }
-
-        // 인증 상태 리스너
-        const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-          if (isMounted && currentUser) {
-            setUser(currentUser);
-            setStatus('연결 성공!');
-          }
-        });
-
-        return unsubscribe;
+        config = JSON.parse(__firebase_config);
+        addLog('Firebase 설정 로드 성공');
       } catch (err) {
-        if (isMounted) {
-          setError(`시스템 에러: ${err.message}`);
-          setStatus('연결 실패');
-        }
+        addLog('Firebase 설정 로드 실패 (JSON Parse Error)', 'error');
+        setStatus('error');
+        return;
       }
+
+      // 2. Firebase 초기화
+      const app = initializeApp(config);
+      const auth = getAuth(app);
+      const db = getFirestore(app);
+      const appId = typeof __app_id !== 'undefined' ? __app_id : 'diag-app-id';
+      addLog(`App ID: ${appId}`);
+
+      // 3. 인증 시도
+      try {
+        addLog('인증 시도 중...');
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          addLog('Custom Token 사용 시도');
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          addLog('익명 로그인 시도');
+          await signInAnonymously(auth);
+        }
+      } catch (err) {
+        addLog(`인증 실패: ${err.message}`, 'error');
+        setStatus('error');
+      }
+
+      // 4. Auth 상태 변경 감시
+      onAuthStateChanged(auth, async (currentUser) => {
+        if (currentUser) {
+          setUser(currentUser);
+          addLog(`인증 성공! UID: ${currentUser.uid}`, 'success');
+          
+          // 5. Firestore 읽기 테스트
+          try {
+            addLog('Firestore 데이터 읽기 시도 중...');
+            // 규칙 확인을 위해 가장 기본적인 경로 시도
+            const testPath = `artifacts/${appId}/public/data/test_collection`;
+            addLog(`타겟 경로: ${testPath}`);
+            
+            const q = query(collection(db, 'artifacts', appId, 'public', 'data', 'test_collection'), limit(1));
+            await getDocs(q);
+            
+            addLog('Firestore 연결 성공!', 'success');
+            setStatus('connected');
+          } catch (err) {
+            addLog(`Firestore 에러 (권한 부족 가능성): ${err.code} - ${err.message}`, 'error');
+            setStatus('db_error');
+          }
+        } else {
+          addLog('로그아웃 상태 또는 인증 대기 중...');
+        }
+      });
     };
 
-    const addStatusLog = (msg) => {
-      console.log(`[Firebase] ${msg}`);
-    };
-
-    const cleanupPromise = startConnection();
-
-    return () => {
-      isMounted = false;
-      cleanupPromise.then(unsub => unsub && unsub());
-    };
+    runDiagnostic();
   }, []);
 
   return (
-    <div className="flex flex-col items-center justify-center min-h-screen bg-slate-50 text-slate-900 font-sans p-6 text-center">
-      <div className="max-w-md w-full border-4 border-slate-900 p-8 shadow-[12px_12px_0px_0px_rgba(15,23,42,1)] bg-white">
-        <h1 className="text-4xl font-black mb-8 uppercase tracking-tighter italic border-b-4 border-slate-900 pb-2">
-          Firebase Auth
-        </h1>
+    <div className="min-h-screen bg-gray-900 text-gray-100 p-6 font-mono">
+      <div className="max-w-3xl mx-auto">
+        <header className="mb-8 border-b border-gray-700 pb-4 flex justify-between items-center">
+          <h1 className="text-2xl font-bold text-blue-400">Firebase Connectivity Debugger</h1>
+          <div className={`px-3 py-1 rounded-full text-xs font-bold uppercase ${
+            status === 'connected' ? 'bg-green-900 text-green-300' :
+            status === 'error' || status === 'db_error' ? 'bg-red-900 text-red-300' : 'bg-yellow-900 text-yellow-300'
+          }`}>
+            {status}
+          </div>
+        </header>
 
-        <div className={`text-xl font-bold py-4 px-8 mb-8 inline-block border-4 border-slate-900 transition-colors ${user ? 'bg-emerald-400' : 'bg-amber-300'}`}>
-          {status}
-        </div>
+        <section className="bg-black rounded-lg p-4 shadow-xl border border-gray-800 h-[500px] overflow-y-auto">
+          {logs.map(log => (
+            <div key={log.id} className="mb-2 text-sm flex">
+              <span className="text-gray-500 mr-3 shrink-0">[{log.time}]</span>
+              <span className={
+                log.type === 'error' ? 'text-red-400' :
+                log.type === 'success' ? 'text-green-400' : 'text-blue-300'
+              }>
+                {log.type === 'error' ? '✖ ' : log.type === 'success' ? '✔ ' : 'ℹ '}
+                {log.msg}
+              </span>
+            </div>
+          ))}
+          {status === 'initial' && <div className="animate-pulse text-gray-500">대기 중...</div>}
+        </section>
 
         {user && (
-          <div className="text-left bg-slate-100 p-5 border-2 border-slate-900 rounded-sm">
-            <p className="text-[10px] uppercase font-black text-slate-500 mb-2 tracking-widest">Active User UID</p>
-            <p className="text-xs font-mono break-all font-bold text-slate-800">{user.uid}</p>
+          <div className="mt-6 p-4 bg-gray-800 rounded-lg border border-gray-700">
+            <h2 className="text-sm font-bold text-gray-400 mb-2 uppercase">현재 세션 정보</h2>
+            <p className="text-xs">User ID: <span className="text-yellow-400">{user.uid}</span></p>
+            <p className="text-xs mt-1">Provider: <span className="text-yellow-400">{user.isAnonymous ? 'Anonymous' : 'Custom'}</span></p>
           </div>
         )}
 
-        {error && (
-          <div className="mt-8 p-4 bg-rose-50 border-4 border-rose-500 text-rose-600 text-sm font-black uppercase">
-            {error}
-          </div>
-        )}
-
-        {!firebaseConfig && !error && (
-          <p className="mt-6 text-sm text-slate-400 font-medium">
-            Vercel 배포 시 환경 변수명을 <br/>
-            <span className="font-mono font-bold text-slate-600 underline">VITE_FIREBASE_CONFIG</span>로 설정하세요.
-          </p>
-        )}
-        
-        <button 
-          onClick={() => window.location.reload()}
-          className="mt-10 w-full bg-slate-900 text-white py-5 font-black text-xl hover:bg-slate-800 transition-transform active:scale-95 uppercase tracking-widest"
-        >
-          Retry Connection
-        </button>
+        <div className="mt-8 text-xs text-gray-500">
+          <p>※ Firestore 에러가 발생하면 콘솔의 'Rules' 탭에서 보안 규칙이 해당 경로를 허용하는지 확인하세요.</p>
+        </div>
       </div>
-      
-      <p className="mt-8 text-[10px] text-slate-400 font-bold uppercase tracking-widest">
-        Simple Connectivity Diagnostic Tool v1.0
-      </p>
     </div>
   );
-}
+};
+
+export default App;
