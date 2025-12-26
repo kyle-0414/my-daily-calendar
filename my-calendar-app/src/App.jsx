@@ -282,9 +282,9 @@ const App = () => {
         </nav>
         <div className="px-3 pt-4 border-t border-slate-100">
           <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer">
-            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold ring-2 ring-white">JD</div>
+            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold ring-2 ring-white">Kyle</div>
             <div className="hidden lg:block overflow-hidden">
-              <p className="text-xs font-bold text-slate-700 truncate">Jane Doe</p>
+              <p className="text-xs font-bold text-slate-700 truncate">Kyle Lee</p>
               <p className="text-[10px] text-slate-400 truncate tracking-tight uppercase font-bold">Workspace</p>
             </div>
           </div>
@@ -367,6 +367,18 @@ const App = () => {
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Selected Date</p>
                </div>
                <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full"><Bell size={18}/></button>
+            </div>
+
+            {/* ✨ 검색 영역 복구 */}
+            <div className="relative group">
+              <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16}/>
+              <input 
+                type="text" 
+                placeholder="Search..." 
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-white border border-slate-200 rounded-xl text-xs font-medium focus:ring-4 focus:ring-indigo-500/5 focus:border-indigo-500 outline-none transition-all shadow-sm"
+              />
             </div>
 
             {/* ✨ 탭 전환 버튼 */}
