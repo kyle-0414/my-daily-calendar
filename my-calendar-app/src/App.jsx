@@ -11,7 +11,7 @@ import {
   Loader2,
   LayoutGrid,
   Settings,
-  Bell,
+  Megaphone, // ✨ Bell 대신 Megaphone 사용
   Search,
   CheckSquare,
   BarChart3,
@@ -21,7 +21,8 @@ import {
   BookOpen,
   ListTodo,
   Save,
-  Check
+  Check,
+  EyeOff // 숨김 아이콘
 } from 'lucide-react';
 
 import { 
@@ -32,7 +33,9 @@ import {
   deleteDoc, 
   updateDoc,
   query,
-  getDoc
+  getDoc,
+  where,
+  orderBy
 } from 'firebase/firestore';
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './firebase';
@@ -49,23 +52,31 @@ const App = () => {
   
   // 데이터 상태
   const [tasks, setTasks] = useState([]);
-  const [dailyNote, setDailyNote] = useState(''); // 📝 오늘의 일기 상태
-  const [savedDailyNote, setSavedDailyNote] = useState(''); // 저장된 일기 내용 (비교용)
-  const [dailyMood, setDailyMood] = useState(null); // 😐 오늘의 기분
-  const [savedDailyMood, setSavedDailyMood] = useState(null); // 저장된 기분 (비교용)
+  const [dailyNote, setDailyNote] = useState(''); 
+  const [savedDailyNote, setSavedDailyNote] = useState(''); 
+  const [dailyMood, setDailyMood] = useState(null); 
+  const [savedDailyMood, setSavedDailyMood] = useState(null); 
+  
+  // ✨ 공지사항 관련 상태
+  const [notices, setNotices] = useState([]);
+  const [isNoticeOpen, setIsNoticeOpen] = useState(false); // 공지 목록 열림 여부
+  const [isNoticeModalOpen, setIsNoticeModalOpen] = useState(false); // 공지 추가/수정 모달
+  const [newNoticeContent, setNewNoticeContent] = useState('');
+  const [newNoticeDate, setNewNoticeDate] = useState(new Date().toISOString().split('T')[0]); // YYYY-MM-DD
+  const [editingNoticeId, setEditingNoticeId] = useState(null);
 
   // UI 상태
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [activeTab, setActiveTab] = useState('tasks'); // 'tasks' | 'journal' (탭 전환용)
-  const [expandedTaskId, setExpandedTaskId] = useState(null); // 펼쳐진 할 일 ID
-  const [isNoteSaving, setIsNoteSaving] = useState(false); // 저장 중 표시
-  const [showSaveSuccess, setShowSaveSuccess] = useState(false); // 저장 완료 표시
+  const [activeTab, setActiveTab] = useState('tasks'); 
+  const [expandedTaskId, setExpandedTaskId] = useState(null); 
+  const [isNoteSaving, setIsNoteSaving] = useState(false); 
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false); 
 
   // 입력 폼 상태
   const [newTask, setNewTask] = useState('');
   const [newPriority, setNewPriority] = useState('medium');
   const [editingId, setEditingId] = useState(null);
-  const [taskMemo, setTaskMemo] = useState(''); // 할 일 상세 메모 임시 저장
+  const [taskMemo, setTaskMemo] = useState(''); 
 
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -109,7 +120,7 @@ const App = () => {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Daily Note & Mood 불러오기 (날짜 바뀔 때마다)
+  // 3. Daily Note & Mood 구독
   useEffect(() => {
     if (!user) return;
     const dateStr = formatDate(selectedDate);
@@ -120,7 +131,7 @@ const App = () => {
         if (noteDoc.exists()) {
           const data = noteDoc.data();
           setDailyNote(data.content || '');
-          setSavedDailyNote(data.content || ''); // 저장된 상태 기억
+          setSavedDailyNote(data.content || ''); 
           setDailyMood(data.mood || null);
           setSavedDailyMood(data.mood || null);
         } else {
@@ -134,10 +145,109 @@ const App = () => {
       }
     };
     fetchNote();
-    setShowSaveSuccess(false); // 날짜 바뀌면 성공 메시지 초기화
+    setShowSaveSuccess(false); 
   }, [user, selectedDate]);
 
-  // 📝 Daily Note 저장 함수
+  // ✨ 4. 공지사항 구독 (오늘 날짜 이후의 활성 공지 또는 모든 공지)
+  useEffect(() => {
+    if (!user) return;
+    const noticesCollection = collection(db, 'artifacts', appId, 'users', user.uid, 'notices');
+    
+    // 간단하게 모든 공지를 가져와서 클라이언트에서 필터링 (복잡한 쿼리 제한 회피)
+    const unsubscribe = onSnapshot(
+      query(noticesCollection),
+      (snapshot) => {
+        const allNotices = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+        // 날짜순 정렬 (최신순)
+        allNotices.sort((a, b) => new Date(b.targetDate) - new Date(a.targetDate));
+        setNotices(allNotices);
+      },
+      (error) => console.error("Notice Error:", error)
+    );
+    return () => unsubscribe();
+  }, [user]);
+
+
+  // --- 공지사항 관련 핸들러 ---
+
+  // 공지 추가 모달 열기
+  const openNoticeModal = (notice = null) => {
+    if (notice) {
+      setEditingNoticeId(notice.id);
+      setNewNoticeContent(notice.content);
+      setNewNoticeDate(notice.targetDate);
+    } else {
+      setEditingNoticeId(null);
+      setNewNoticeContent('');
+      setNewNoticeDate(formatDate(new Date())); // 오늘 날짜 기본
+    }
+    setIsNoticeModalOpen(true);
+    setIsNoticeOpen(false); // 리스트는 닫기
+  };
+
+  // 공지 저장 (추가/수정)
+  const handleSaveNotice = async () => {
+    if (!newNoticeContent.trim() || !user) return;
+
+    try {
+      if (editingNoticeId) {
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notices', editingNoticeId), {
+          content: newNoticeContent,
+          targetDate: newNoticeDate,
+          updatedAt: new Date().toISOString()
+        });
+      } else {
+        const noticeId = crypto.randomUUID();
+        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notices', noticeId), {
+          content: newNoticeContent,
+          targetDate: newNoticeDate,
+          isHidden: false, // 기본적으로 보임
+          createdAt: new Date().toISOString()
+        });
+      }
+      setIsNoticeModalOpen(false);
+      // 다시 목록 열어주기 (선택 사항)
+      setIsNoticeOpen(true);
+    } catch (error) {
+      console.error("Notice Save Error:", error);
+    }
+  };
+
+  // 공지 숨김 처리 (삭제 대신 숨김 플래그 사용)
+  const toggleNoticeVisibility = async (id, currentStatus) => {
+    if (!user) return;
+    try {
+      await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notices', id), {
+        isHidden: !currentStatus
+      });
+    } catch (error) {
+      console.error("Notice Hide Error:", error);
+    }
+  };
+  
+  // 공지 삭제 (완전 삭제)
+  const deleteNotice = async (id) => {
+      if(!user) return;
+      try {
+          await deleteDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notices', id));
+      } catch(error) {
+          console.error("Notice Delete Error:", error);
+      }
+  }
+
+  // 표시할 공지 필터링 (숨김 처리된 것 제외, 혹은 관리 모드에서는 다 보여줄 수도 있음)
+  // 여기서는 팝업에는 '숨겨지지 않은' + '오늘 또는 미래의' 공지만 보여주고,
+  // '전체 보기' 같은 관리 화면이 있다면 거기서 다 보여주는 게 좋지만, 
+  // 심플하게 '숨겨지지 않은 공지'만 리스트에 보여줍니다.
+  const visibleNotices = notices.filter(n => !n.isHidden);
+  
+  // 배지 카운트: 오늘 날짜 기준, 보여질 공지 중 아직 날짜가 지나지 않은 것 등 조건 추가 가능
+  // 여기서는 심플하게 '숨겨지지 않은 모든 공지' 개수로 합니다.
+  const noticeCount = visibleNotices.length;
+
+
+  // --- 기존 핸들러들 ---
+
   const saveDailyNote = async () => {
     if (!user) return;
     setIsNoteSaving(true);
@@ -149,13 +259,12 @@ const App = () => {
         updatedAt: new Date().toISOString()
       }, { merge: true });
       
-      setSavedDailyNote(dailyNote); // 저장된 내용 업데이트
+      setSavedDailyNote(dailyNote); 
       setSavedDailyMood(dailyMood);
       
-      // 저장 완료 애니메이션
       setIsNoteSaving(false);
       setShowSaveSuccess(true);
-      setTimeout(() => setShowSaveSuccess(false), 2000); // 2초 뒤 사라짐
+      setTimeout(() => setShowSaveSuccess(false), 2000); 
       
     } catch (error) {
       console.error("Note Save Error:", error);
@@ -163,17 +272,15 @@ const App = () => {
     }
   };
 
-  // 변경 사항이 있는지 확인 (저장 버튼 활성화용)
   const isNoteDirty = dailyNote !== savedDailyNote || dailyMood !== savedDailyMood;
 
-  // 📝 할 일 상세 메모 저장 함수
   const saveTaskMemo = async (taskId, content) => {
     if (!user) return;
     try {
       await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', taskId), {
         description: content
       });
-      setExpandedTaskId(null); // 저장 후 닫기
+      setExpandedTaskId(null); 
     } catch (error) {
       console.error("Task Memo Save Error:", error);
     }
@@ -225,7 +332,7 @@ const App = () => {
           text: newTask,
           completed: false,
           priority: newPriority,
-          description: '', // 상세 메모 초기값
+          description: '', 
           createdAt: new Date().toISOString()
         });
       }
@@ -322,7 +429,7 @@ const App = () => {
       {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
         {/* 2. Calendar Section */}
-        <section className="flex-1 flex flex-col bg-white overflow-hidden">
+        <section className="flex-1 flex flex-col bg-white overflow-hidden relative">
           <header className="px-8 py-6 flex items-center justify-between border-b border-slate-100">
             <div className="flex items-center gap-6">
               <h2 className="text-2xl font-black text-slate-900 tracking-tight">
@@ -385,7 +492,7 @@ const App = () => {
         </section>
 
         {/* 3. Right Panel (Dynamic) */}
-        <aside className="w-80 lg:w-[400px] bg-slate-50 border-l border-slate-100 p-6 flex flex-col gap-6 overflow-hidden">
+        <aside className="w-80 lg:w-[400px] bg-slate-50 border-l border-slate-100 p-6 flex flex-col gap-6 overflow-hidden relative">
           
           {/* Header & Tabs */}
           <div className="flex flex-col gap-4">
@@ -394,7 +501,47 @@ const App = () => {
                   <h3 className="font-black text-lg text-slate-900 tracking-tight">{formatDate(selectedDate)}</h3>
                   <p className="text-[10px] font-bold text-slate-400 uppercase tracking-widest mt-0.5">Selected Date</p>
                </div>
-               <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full"><Bell size={18}/></button>
+               {/* ✨ 공지사항 아이콘 (Bell -> Megaphone) */}
+               <div className="relative">
+                 <button 
+                  onClick={() => setIsNoticeOpen(!isNoticeOpen)}
+                  className={`p-2 rounded-full transition-all ${isNoticeOpen ? 'bg-indigo-100 text-indigo-600' : 'text-slate-400 hover:bg-slate-100'}`}
+                 >
+                   <Megaphone size={18}/>
+                   {noticeCount > 0 && (
+                     <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-rose-500 rounded-full border border-white"></span>
+                   )}
+                 </button>
+                 
+                 {/* ✨ 공지사항 드롭다운/패널 */}
+                 {isNoticeOpen && (
+                   <div className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl shadow-xl border border-slate-100 z-50 animate-in fade-in slide-in-from-top-2">
+                     <div className="p-4 border-b border-slate-50 flex justify-between items-center bg-indigo-50/50 rounded-t-2xl">
+                       <h4 className="font-bold text-xs text-indigo-900 uppercase tracking-wider">Important Notices</h4>
+                       <button onClick={() => openNoticeModal()} className="p-1 text-indigo-600 hover:bg-indigo-100 rounded-lg">
+                         <Plus size={14}/>
+                       </button>
+                     </div>
+                     <div className="max-h-60 overflow-y-auto custom-scrollbar p-2 space-y-2">
+                       {visibleNotices.length > 0 ? visibleNotices.map(notice => (
+                         <div key={notice.id} className="bg-white p-3 rounded-xl border border-slate-100 shadow-sm hover:border-indigo-100 transition-all group">
+                           <div className="flex justify-between items-start mb-1">
+                             <span className="text-[10px] font-bold text-indigo-500 bg-indigo-50 px-1.5 py-0.5 rounded">{notice.targetDate}</span>
+                             <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                               <button onClick={() => openNoticeModal(notice)} className="text-slate-300 hover:text-indigo-500"><Edit2 size={12}/></button>
+                               <button onClick={() => toggleNoticeVisibility(notice.id, notice.isHidden)} className="text-slate-300 hover:text-slate-500"><EyeOff size={12}/></button>
+                               <button onClick={() => deleteNotice(notice.id)} className="text-slate-300 hover:text-rose-500"><Trash2 size={12}/></button>
+                             </div>
+                           </div>
+                           <p className="text-xs text-slate-700 font-medium leading-relaxed">{notice.content}</p>
+                         </div>
+                       )) : (
+                         <div className="py-8 text-center text-slate-300 text-[10px] font-bold uppercase">No Notices</div>
+                       )}
+                     </div>
+                   </div>
+                 )}
+               </div>
             </div>
 
             {/* ✨ 검색 영역 */}
@@ -647,6 +794,55 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* ✨ Notice Modal */}
+      {isNoticeModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsNoticeModalOpen(false)}>
+          <div 
+            className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in fade-in zoom-in duration-200" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="font-bold text-lg text-slate-800">{editingNoticeId ? 'Edit Notice' : 'New Notice'}</h3>
+              <button onClick={() => setIsNoticeModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Date</label>
+                <input
+                  type="date"
+                  value={newNoticeDate}
+                  onChange={(e) => setNewNoticeDate(e.target.value)}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Message</label>
+                <textarea
+                  value={newNoticeContent}
+                  onChange={(e) => setNewNoticeContent(e.target.value)}
+                  placeholder="Important message..."
+                  className="w-full h-32 px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all resize-none"
+                  autoFocus
+                />
+              </div>
+              
+              <button 
+                onClick={handleSaveNotice}
+                disabled={!newNoticeContent.trim()}
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-2"
+              >
+                {editingNoticeId ? 'Update Notice' : 'Post Notice'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 };
