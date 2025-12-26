@@ -14,10 +14,10 @@ import {
   Search,
   CheckSquare,
   BarChart3,
+  X
 } from 'lucide-react';
 
 import { 
-  getFirestore, 
   collection, 
   doc, 
   onSnapshot, 
@@ -26,10 +26,10 @@ import {
   updateDoc,
   query
 } from 'firebase/firestore';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
+import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './firebase';
 
-/** ✅ Firestore 경로에 쓰는 appId (원래 코드 의도 유지) */
+/** ✅ Firestore 경로에 쓰는 appId */
 const appId = import.meta.env.VITE_FIREBASE_APP_ID || 'premium-modern-dashboard';
 
 const App = () => {
@@ -348,3 +348,83 @@ const App = () => {
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-3">
                 <h4 className="text-xs font-bold text-slate-800 tracking-tight">Productivity</h4>
+                <span className="text-xs font-black text-indigo-600">{progress}%</span>
+              </div>
+              <div className="h-2 w-full bg-slate-100 rounded-full overflow-hidden">
+                <div 
+                  className="h-full bg-indigo-600 rounded-full transition-all duration-500 ease-out"
+                  style={{ width: `${progress}%` }}
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-3 font-medium leading-relaxed">
+                {progress === 100 ? "All tasks completed! 🎉" : "Keep going, you're doing great!"}
+              </p>
+            </div>
+          </div>
+        </aside>
+      </main>
+
+      {/* Add Task Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
+          <div 
+            className="bg-white rounded-2xl w-full max-w-sm p-6 shadow-2xl animate-in fade-in zoom-in duration-200" 
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <h3 className="font-bold text-lg text-slate-800">New Task</h3>
+              <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
+                <X size={20}/>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Task Name</label>
+                <input
+                  type="text"
+                  value={newTask}
+                  onChange={(e) => setNewTask(e.target.value)}
+                  placeholder="What needs to be done?"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-2">Priority</label>
+                <div className="flex gap-2">
+                  {['low', 'medium', 'high'].map(p => (
+                    <button
+                      key={p}
+                      onClick={() => setNewPriority(p)}
+                      className={`flex-1 py-2 rounded-lg text-xs font-bold uppercase tracking-wide border-2 transition-all
+                        ${newPriority === p 
+                          ? p === 'high' ? 'border-rose-500 bg-rose-50 text-rose-600'
+                          : p === 'medium' ? 'border-indigo-500 bg-indigo-50 text-indigo-600'
+                          : 'border-slate-500 bg-slate-50 text-slate-600'
+                          : 'border-transparent bg-slate-50 text-slate-400 hover:bg-slate-100'
+                        }`}
+                    >
+                      {p}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <button 
+                onClick={handleAddTask}
+                disabled={!newTask.trim()}
+                className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
+              >
+                Add Task
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default App;
