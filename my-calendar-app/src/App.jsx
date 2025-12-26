@@ -20,7 +20,8 @@ import {
   ChevronUp,
   BookOpen,
   ListTodo,
-  Save
+  Save,
+  Check
 } from 'lucide-react';
 
 import { 
@@ -49,12 +50,17 @@ const App = () => {
   // 데이터 상태
   const [tasks, setTasks] = useState([]);
   const [dailyNote, setDailyNote] = useState(''); // 📝 오늘의 일기 상태
-  
+  const [savedDailyNote, setSavedDailyNote] = useState(''); // 저장된 일기 내용 (비교용)
+  const [dailyMood, setDailyMood] = useState(null); // 😐 오늘의 기분
+  const [savedDailyMood, setSavedDailyMood] = useState(null); // 저장된 기분 (비교용)
+
   // UI 상태
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('tasks'); // 'tasks' | 'journal' (탭 전환용)
   const [expandedTaskId, setExpandedTaskId] = useState(null); // 펼쳐진 할 일 ID
-  
+  const [isNoteSaving, setIsNoteSaving] = useState(false); // 저장 중 표시
+  const [showSaveSuccess, setShowSaveSuccess] = useState(false); // 저장 완료 표시
+
   // 입력 폼 상태
   const [newTask, setNewTask] = useState('');
   const [newPriority, setNewPriority] = useState('medium');
@@ -103,7 +109,7 @@ const App = () => {
     return () => unsubscribe();
   }, [user]);
 
-  // 3. Daily Note 불러오기 (날짜 바뀔 때마다)
+  // 3. Daily Note & Mood 불러오기 (날짜 바뀔 때마다)
   useEffect(() => {
     if (!user) return;
     const dateStr = formatDate(selectedDate);
@@ -112,31 +118,53 @@ const App = () => {
       try {
         const noteDoc = await getDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notes', dateStr));
         if (noteDoc.exists()) {
-          setDailyNote(noteDoc.data().content || '');
+          const data = noteDoc.data();
+          setDailyNote(data.content || '');
+          setSavedDailyNote(data.content || ''); // 저장된 상태 기억
+          setDailyMood(data.mood || null);
+          setSavedDailyMood(data.mood || null);
         } else {
           setDailyNote('');
+          setSavedDailyNote('');
+          setDailyMood(null);
+          setSavedDailyMood(null);
         }
       } catch (e) {
         console.error("Note Fetch Error:", e);
       }
     };
     fetchNote();
+    setShowSaveSuccess(false); // 날짜 바뀌면 성공 메시지 초기화
   }, [user, selectedDate]);
 
   // 📝 Daily Note 저장 함수
   const saveDailyNote = async () => {
     if (!user) return;
+    setIsNoteSaving(true);
     const dateStr = formatDate(selectedDate);
     try {
       await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'notes', dateStr), {
         content: dailyNote,
+        mood: dailyMood,
         updatedAt: new Date().toISOString()
       }, { merge: true });
-      // 저장 성공 피드백(간단히 깜빡임 효과 등)을 줄 수도 있음
+      
+      setSavedDailyNote(dailyNote); // 저장된 내용 업데이트
+      setSavedDailyMood(dailyMood);
+      
+      // 저장 완료 애니메이션
+      setIsNoteSaving(false);
+      setShowSaveSuccess(true);
+      setTimeout(() => setShowSaveSuccess(false), 2000); // 2초 뒤 사라짐
+      
     } catch (error) {
       console.error("Note Save Error:", error);
+      setIsNoteSaving(false);
     }
   };
+
+  // 변경 사항이 있는지 확인 (저장 버튼 활성화용)
+  const isNoteDirty = dailyNote !== savedDailyNote || dailyMood !== savedDailyMood;
 
   // 📝 할 일 상세 메모 저장 함수
   const saveTaskMemo = async (taskId, content) => {
@@ -282,7 +310,7 @@ const App = () => {
         </nav>
         <div className="px-3 pt-4 border-t border-slate-100">
           <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer">
-            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold ring-2 ring-white">Kyle</div>
+            <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold ring-2 ring-white">KL</div>
             <div className="hidden lg:block overflow-hidden">
               <p className="text-xs font-bold text-slate-700 truncate">Kyle Lee</p>
               <p className="text-[10px] text-slate-400 truncate tracking-tight uppercase font-bold">Workspace</p>
@@ -369,7 +397,7 @@ const App = () => {
                <button className="p-2 text-slate-400 hover:bg-slate-100 rounded-full"><Bell size={18}/></button>
             </div>
 
-            {/* ✨ 검색 영역 복구 */}
+            {/* ✨ 검색 영역 */}
             <div className="relative group">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16}/>
               <input 
@@ -420,6 +448,10 @@ const App = () => {
                         <div 
                           className="flex items-center gap-3 p-3 cursor-pointer"
                           onClick={() => {
+                             // 검색 중이라면 캘린더 날짜도 이동
+                             if (searchTerm.trim() !== '') {
+                               jumpToTaskDate(task.date);
+                             }
                              if(isExpanded) {
                                setExpandedTaskId(null);
                              } else {
@@ -495,12 +527,19 @@ const App = () => {
                             <BookOpen className="w-4 h-4 text-amber-500"/>
                             <span className="text-xs font-bold text-amber-800 uppercase tracking-wider">Today's Note</span>
                         </div>
-                        {/* 저장 버튼 (자동 저장 느낌을 위해 평소엔 숨겨두거나 작게 표시) */}
+                        {/* 저장 버튼: 변경사항이 있을 때만 활성화 */}
                         <button 
                           onClick={saveDailyNote}
-                          className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-100 text-amber-700 rounded-lg text-xs font-bold hover:bg-amber-200 transition-colors"
+                          disabled={!isNoteDirty}
+                          className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold transition-all
+                            ${showSaveSuccess 
+                                ? 'bg-emerald-100 text-emerald-700' 
+                                : isNoteDirty 
+                                  ? 'bg-amber-200 text-amber-800 hover:bg-amber-300' 
+                                  : 'bg-amber-100/50 text-amber-800/40 cursor-default'}`}
                         >
-                          <Save size={14}/> Save
+                          {showSaveSuccess ? <Check size={14}/> : <Save size={14}/>}
+                          {showSaveSuccess ? 'Saved!' : 'Save'}
                         </button>
                     </div>
                     <div className="flex-1 p-1">
@@ -513,12 +552,21 @@ const App = () => {
                     </div>
                  </div>
                  
-                 {/* Mood Tracker (Visual Only for now) */}
+                 {/* Mood Tracker */}
                  <div className="mt-4 p-4 rounded-2xl bg-white border border-slate-100 shadow-sm">
                      <h4 className="text-[10px] font-bold text-slate-400 uppercase mb-3 text-center">Mood of the day</h4>
                      <div className="flex justify-between gap-2">
                          {['😄', '🙂', '😐', '😫'].map((emoji, i) => (
-                           <button key={i} className="flex-1 py-2 text-xl rounded-xl hover:bg-slate-50 transition-colors border border-transparent hover:border-slate-100">{emoji}</button>
+                           <button 
+                             key={i} 
+                             onClick={() => setDailyMood(emoji)}
+                             className={`flex-1 py-2 text-xl rounded-xl transition-all border
+                               ${dailyMood === emoji 
+                                 ? 'bg-indigo-50 border-indigo-200 shadow-sm ring-1 ring-indigo-200 scale-105' 
+                                 : 'border-transparent hover:bg-slate-50 hover:border-slate-100'}`}
+                           >
+                             {emoji}
+                           </button>
                          ))}
                      </div>
                  </div>
