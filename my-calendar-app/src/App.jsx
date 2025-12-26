@@ -16,7 +16,6 @@ import {
   BarChart3,
 } from 'lucide-react';
 
-import { initializeApp } from 'firebase/app';
 import { 
   getFirestore, 
   collection, 
@@ -28,7 +27,7 @@ import {
   query
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { auth, db, appId } from './firebase';
+import { auth, db } from './firebase';
 
 /** ✅ Firestore 경로에 쓰는 appId (원래 코드 의도 유지) */
 const appId = import.meta.env.VITE_FIREBASE_APP_ID || 'premium-modern-dashboard';
