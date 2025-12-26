@@ -28,34 +28,7 @@ import {
   query
 } from 'firebase/firestore';
 import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-
-/** ✅ Vercel Env (VITE_*) 기반 Firebase 설정 */
-const firebaseConfig = {
-  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
-  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
-  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
-  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
-  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
-  appId: import.meta.env.VITE_FIREBASE_APP_ID,
-};
-
-const assertFirebaseEnv = () => {
-  const missing = Object.entries(firebaseConfig)
-    .filter(([_, v]) => !v)
-    .map(([k]) => k);
-
-  if (missing.length) {
-    // 화면이 “기본 HTML”처럼 보이는 문제와는 별개로,
-    // env가 비어있으면 Firestore/Auth가 동작하지 않음.
-    console.error('[Firebase Env Missing]', missing);
-  }
-};
-
-assertFirebaseEnv();
-
-const app = initializeApp(firebaseConfig);
-const auth = getAuth(app);
-const db = getFirestore(app);
+import { auth, db, appId } from './firebase';
 
 /** ✅ Firestore 경로에 쓰는 appId (원래 코드 의도 유지) */
 const appId = import.meta.env.VITE_FIREBASE_APP_ID || 'premium-modern-dashboard';
