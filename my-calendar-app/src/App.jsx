@@ -4,6 +4,7 @@ import {
   ChevronRight, 
   Plus, 
   Trash2, 
+  Edit2, // ✨ 추가됨
   CheckCircle2, 
   Calendar as CalendarIcon,
   Clock,
@@ -29,7 +30,6 @@ import {
 import { signInAnonymously, onAuthStateChanged } from 'firebase/auth';
 import { auth, db } from './firebase';
 
-/** ✅ Firestore 경로에 쓰는 appId */
 const appId = import.meta.env.VITE_FIREBASE_APP_ID || 'premium-modern-dashboard';
 
 const App = () => {
@@ -39,11 +39,14 @@ const App = () => {
   const [selectedDate, setSelectedDate] = useState(new Date());
   const [tasks, setTasks] = useState([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  
+  // ✨ 수정 기능용 상태
   const [newTask, setNewTask] = useState('');
   const [newPriority, setNewPriority] = useState('medium');
+  const [editingId, setEditingId] = useState(null); // 수정 중인 ID
+
   const [searchTerm, setSearchTerm] = useState('');
 
-  // Helper to format date to YYYY-MM-DD consistently
   const formatDate = (date) => {
     const d = new Date(date);
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -52,7 +55,6 @@ const App = () => {
     return `${year}-${month}-${day}`;
   };
 
-  /** ✅ Auth 초기화: 익명 로그인만 사용 */
   useEffect(() => {
     const initAuth = async () => {
       try {
@@ -61,21 +63,16 @@ const App = () => {
         console.error("Auth Error:", error);
       }
     };
-
     initAuth();
-
     const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) setLoading(false);
     });
-
     return () => unsubscribe();
   }, []);
 
-  /** ✅ Firestore 구독 */
   useEffect(() => {
     if (!user) return;
-
     const tasksCollection = collection(db, 'artifacts', appId, 'users', user.uid, 'tasks');
     const unsubscribe = onSnapshot(
       query(tasksCollection),
@@ -84,7 +81,6 @@ const App = () => {
       },
       (error) => console.error("Firestore Error:", error)
     );
-
     return () => unsubscribe();
   }, [user]);
 
@@ -103,24 +99,51 @@ const App = () => {
     return days;
   }, [currentDate, tasks]);
 
-  const handleAddTask = async () => {
+  // ✨ [New] 추가 모달 열기 (초기화)
+  const openAddModal = () => {
+    setEditingId(null);
+    setNewTask('');
+    setNewPriority('medium');
+    setIsModalOpen(true);
+  };
+
+  // ✨ [New] 수정 모달 열기 (데이터 채우기)
+  const openEditModal = (task) => {
+    setEditingId(task.id);
+    setNewTask(task.text);
+    setNewPriority(task.priority);
+    setIsModalOpen(true);
+  };
+
+  // ✨ [New] 저장 핸들러 (추가/수정 통합)
+  const handleSaveTask = async () => {
     if (!newTask.trim() || !user) return;
-    const dateStr = formatDate(selectedDate);
-    const taskId = crypto.randomUUID();
 
     try {
-      await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', taskId), {
-        date: dateStr,
-        text: newTask,
-        completed: false,
-        priority: newPriority,
-        createdAt: new Date().toISOString()
-      });
+      if (editingId) {
+        // 수정 로직
+        await updateDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', editingId), {
+          text: newTask,
+          priority: newPriority,
+        });
+      } else {
+        // 추가 로직
+        const dateStr = formatDate(selectedDate);
+        const taskId = crypto.randomUUID();
+        await setDoc(doc(db, 'artifacts', appId, 'users', user.uid, 'tasks', taskId), {
+          date: dateStr,
+          text: newTask,
+          completed: false,
+          priority: newPriority,
+          createdAt: new Date().toISOString()
+        });
+      }
 
       setNewTask('');
+      setEditingId(null);
       setIsModalOpen(false);
     } catch (error) {
-      console.error("Add Error:", error);
+      console.error("Save Error:", error);
     }
   };
 
@@ -173,7 +196,6 @@ const App = () => {
 
   return (
     <div className="flex h-screen bg-[#F8FAFC] text-slate-800 font-sans selection:bg-indigo-100 selection:text-indigo-900">
-      {/* 1. Sidebar */}
       <aside className="w-18 lg:w-64 bg-white border-r border-slate-200 flex flex-col py-6 transition-all duration-300">
         <div className="flex items-center gap-3 px-6 mb-8">
           <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center text-white shadow-lg shadow-indigo-100">
@@ -195,7 +217,6 @@ const App = () => {
             </button>
           ))}
         </nav>
-
         <div className="px-3 pt-4 border-t border-slate-100">
           <div className="flex items-center gap-3 px-3 py-3 rounded-xl bg-slate-50 border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer">
             <div className="w-8 h-8 rounded-full bg-indigo-100 text-indigo-700 flex items-center justify-center text-[10px] font-bold ring-2 ring-white">JD</div>
@@ -207,9 +228,7 @@ const App = () => {
         </div>
       </aside>
 
-      {/* Main Content */}
       <main className="flex-1 flex overflow-hidden">
-        {/* 2. Calendar Section */}
         <section className="flex-1 flex flex-col bg-white overflow-hidden">
           <header className="px-8 py-6 flex items-center justify-between border-b border-slate-100">
             <div className="flex items-center gap-6">
@@ -272,9 +291,7 @@ const App = () => {
           </div>
         </section>
 
-        {/* 3. Panel Section */}
         <aside className="w-80 lg:w-[400px] bg-slate-50 border-l border-slate-100 p-6 flex flex-col gap-6 overflow-hidden">
-          {/* Top Search & Utilities */}
           <div className="flex items-center gap-3">
             <div className="flex-1 relative group">
               <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={16}/>
@@ -289,7 +306,6 @@ const App = () => {
             <button className="p-2.5 bg-white border border-slate-100 rounded-2xl text-slate-400 hover:text-indigo-600 hover:shadow-md transition-all"><Bell size={18}/></button>
           </div>
 
-          {/* Tasks Main Card */}
           <div className="flex-1 flex flex-col min-h-0 bg-white rounded-[2rem] border border-slate-100 overflow-hidden shadow-[0_4px_20px_rgb(0,0,0,0.03)]">
             <div className="px-6 py-5 border-b border-slate-50 flex items-center justify-between">
               <div>
@@ -300,7 +316,8 @@ const App = () => {
                   {searchTerm.trim() !== '' ? `${displayTasks.length} Found` : formatDate(selectedDate)}
                 </p>
               </div>
-              <button onClick={() => setIsModalOpen(true)} className="w-8 h-8 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 hover:-translate-y-0.5 active:scale-95 transition-all flex items-center justify-center">
+              {/* ✨ openAddModal로 교체 */}
+              <button onClick={openAddModal} className="w-8 h-8 bg-indigo-600 text-white rounded-xl shadow-lg shadow-indigo-100 hover:bg-indigo-700 hover:-translate-y-0.5 active:scale-95 transition-all flex items-center justify-center">
                 <Plus size={18}/>
               </button>
             </div>
@@ -328,10 +345,20 @@ const App = () => {
                       <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter">{task.priority}</span>
                     </div>
                   </div>
+                  
+                  {/* ✨ 수정/삭제 버튼 그룹 */}
                   {searchTerm.trim() === '' && (
-                    <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all">
-                      <Trash2 size={14}/>
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={(e) => { e.stopPropagation(); openEditModal(task); }} 
+                        className="p-1.5 text-slate-300 hover:text-indigo-500 hover:bg-indigo-50 rounded-lg transition-all"
+                      >
+                        <Edit2 size={14}/>
+                      </button>
+                      <button onClick={(e) => { e.stopPropagation(); deleteTask(task.id); }} className="p-1.5 text-slate-300 hover:text-rose-500 hover:bg-rose-50 rounded-lg transition-all">
+                        <Trash2 size={14}/>
+                      </button>
+                    </div>
                   )}
                 </div>
               )) : (
@@ -343,7 +370,6 @@ const App = () => {
             </div>
           </div>
 
-          {/* 4. Productivity Progress Card */}
           <div className="bg-white rounded-[1.5rem] p-5 border border-slate-100 shadow-[0_4px_20px_rgb(0,0,0,0.03)] relative overflow-hidden transition-all hover:shadow-md">
             <div className="relative z-10">
               <div className="flex items-center justify-between mb-3">
@@ -364,7 +390,6 @@ const App = () => {
         </aside>
       </main>
 
-      {/* Add Task Modal */}
       {isModalOpen && (
         <div className="fixed inset-0 bg-slate-900/20 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsModalOpen(false)}>
           <div 
@@ -372,7 +397,8 @@ const App = () => {
             onClick={e => e.stopPropagation()}
           >
             <div className="flex items-center justify-between mb-6">
-              <h3 className="font-bold text-lg text-slate-800">New Task</h3>
+              {/* ✨ 타이틀 변경 (New Task / Edit Task) */}
+              <h3 className="font-bold text-lg text-slate-800">{editingId ? 'Edit Task' : 'New Task'}</h3>
               <button onClick={() => setIsModalOpen(false)} className="text-slate-400 hover:text-slate-600">
                 <X size={20}/>
               </button>
@@ -412,12 +438,13 @@ const App = () => {
                 </div>
               </div>
 
+              {/* ✨ 함수 연결 변경 & 버튼 텍스트 변경 */}
               <button 
-                onClick={handleAddTask}
+                onClick={handleSaveTask}
                 disabled={!newTask.trim()}
                 className="w-full py-3.5 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl font-bold text-sm shadow-lg shadow-indigo-200 active:scale-[0.98] transition-all disabled:opacity-50 disabled:cursor-not-allowed mt-4"
               >
-                Add Task
+                {editingId ? 'Update Task' : 'Add Task'}
               </button>
             </div>
           </div>
